@@ -1,0 +1,41 @@
+{
+  "dataset": "ICEWS14",
+  "entities": 7128,
+  "relations": 230,
+  "raw_units_per_day": 24.0,
+  "source_sha256": {
+    "stat.txt": "590d6632d8efd57bdd13dcab133dc0fcd848103f651766fe47ba4316a1db2547",
+    "train.txt": "09d9ec8df4b779e9793229d240a79c762c5c6f7846b31ee5f2522413a6595d57",
+    "valid.txt": "bb9462c02b6fb56f15822692ab9f80d782d6c2cc89e5ed7a83bae2c6022cab66",
+    "test.txt": "a72ddd5cc3c86105d48b76620a1c08223fcdc43ef57d1eb9e10b27fd05b471ab"
+  },
+  "splits": {
+    "train": {
+      "rows": 74845,
+      "timestamps": 304,
+      "raw_time_min": 0,
+      "raw_time_max": 7272,
+      "day_min": 0.0,
+      "day_max": 303.0,
+      "array_sha256": "8e0fa04ca6ce496f1d7d8be085339ed3c33dcde340da6566c51262ed5bf42ecd"
+    },
+    "valid": {
+      "rows": 8514,
+      "timestamps": 30,
+      "raw_time_min": 7296,
+      "raw_time_max": 7992,
+      "day_min": 304.0,
+      "day_max": 333.0,
+      "array_sha256": "68754a85b8f0ca00bfe8276e210a7d33d94e01b558c01242487c49a28e07a18b"
+    },
+    "test": {
+      "rows": 7371,
+      "timestamps": 31,
+      "raw_time_min": 8016,
+      "raw_time_max": 8736,
+      "day_min": 334.0,
+      "day_max": 364.0,
+      "array_sha256": "891cd7e8b175ae0fb0423358aa6e07b84856d9b57691e23b223626413b0f9bb1"
+    }
+  }
+}

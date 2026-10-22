@@ -1,0 +1,41 @@
+{
+  "dataset": "GDELT",
+  "entities": 7691,
+  "relations": 240,
+  "raw_units_per_day": 1440.0,
+  "source_sha256": {
+    "stat.txt": "1912b3088232ea6823394ccbd58ccdaa72eb6bf5429e592666177be6e3fe8ef7",
+    "train.txt": "85d64f4c4db6c0e280334af4a81d1b8ca518667d41e1a4c236e1dca82454863c",
+    "valid.txt": "dc287c1a674d6df5765d537b1c0e0f873492e59c22ba62c795bc617f8eb08272",
+    "test.txt": "8821082240448adbc4f718a2702fdff51a1c3f1264f14d1ff74883378063f851"
+  },
+  "splits": {
+    "train": {
+      "rows": 1734399,
+      "timestamps": 2138,
+      "raw_time_min": 0,
+      "raw_time_max": 34545,
+      "day_min": 0.0,
+      "day_max": 23.989583333333332,
+      "array_sha256": "672a516abc6f8bea15f39a63545c027fb847573e3bb84e0b8f4cec8619768d28"
+    },
+    "valid": {
+      "rows": 238765,
+      "timestamps": 265,
+      "raw_time_min": 34560,
+      "raw_time_max": 38865,
+      "day_min": 24.0,
+      "day_max": 26.989583333333332,
+      "array_sha256": "814714ba52e0e7c446fd60d1eae4e510917a3c85dc54736e9287f7fb6ff2d675"
+    },
+    "test": {
+      "rows": 305241,
+      "timestamps": 348,
+      "raw_time_min": 38880,
+      "raw_time_max": 44625,
+      "day_min": 27.0,
+      "day_max": 30.989583333333332,
+      "array_sha256": "70f849a4031fd52b1e899f54d24436d8c85f61aed623775bb913c272227a0a50"
+    }
+  }
+}
