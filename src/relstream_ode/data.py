@@ -1,4 +1,4 @@
-"""Immutable chronological splits with explicit model-clock and availability clocks."""
+"""Released chronological event splits with a common day-based time axis."""
 
 import argparse
 import json
@@ -13,6 +13,7 @@ import torch
 
 from .config import DATA_ROOT, DATASETS, ROOT
 from .graph import EventGraph
+from .native_stream import NATIVE_FORMAT, SECONDS_PER_DAY, SPLITS, validate_dataset_name
 from .utils import dump_json, fingerprint, sha256
 
 SPECS = {
@@ -23,38 +24,84 @@ SPECS = {
 }
 
 
-def locate_data(root, dataset=None):
+def locate_data(root):
     root = Path(root)
     for candidate in [root, root / "data"]:
-        required = DATASETS if dataset is None else (dataset,)
-        if all((candidate / name / "stat.txt").is_file() for name in required):
+        if all((candidate / name / "stat.txt").is_file() for name in DATASETS):
             return candidate
     raise FileNotFoundError(
         "Expected RE-GCN data/{ICEWS05-15,ICEWS14,ICEWS18,GDELT}; set RELSTREAM_DATA_ROOT or --data-root"
     )
 
 
+def dataset_directory(root, dataset):
+    validate_dataset_name(dataset)
+    if dataset in SPECS:
+        return locate_data(root) / dataset
+    root = Path(root)
+    for parent in (root, root / "data"):
+        directory = parent / dataset
+        if (directory / "native_manifest.json").is_file():
+            return directory
+    raise FileNotFoundError(
+        f"Missing native_manifest.json for {dataset}; run scripts/convert_native.py"
+    )
+
+
+def native_reference(source, dataset):
+    path = source / "native_manifest.json"
+    native = json.loads(path.read_text())
+    if (
+        native["format"] != NATIVE_FORMAT
+        or native["dataset"] != dataset
+        or native["raw_units_per_day"] != SECONDS_PER_DAY
+    ):
+        raise ValueError("Unsupported or mismatched native dataset manifest")
+    files = (
+        "stat.txt",
+        "entity2id.json",
+        "relation2id.json",
+        *(f"{s}.txt" for s in SPLITS),
+    )
+    hashes = {name: native["source_sha256"][name] for name in files}
+    hashes["native_manifest.json"] = sha256(path)
+    return native, hashes
+
+
 def prepare_dataset(dataset, data_root, cache_root):
-    source = locate_data(data_root, dataset) / dataset
+    source = dataset_directory(data_root, dataset)
     output = Path(cache_root) / dataset
     output.mkdir(parents=True, exist_ok=True)
-    n, r, counts, units = SPECS[dataset]
+    native, native_hashes = None, {}
+    if dataset in SPECS:
+        n, r, counts, units = SPECS[dataset]
+    else:
+        native, native_hashes = native_reference(source, dataset)
+        for name, value in native_hashes.items():
+            if sha256(source / name) != value:
+                raise ValueError(f"Native input changed: {dataset}/{name}")
+        n, r, units = (
+            native["entities"],
+            native["relations"],
+            native["raw_units_per_day"],
+        )
+        counts = [native["splits"][split]["rows"] for split in SPLITS]
     stat = [int(x) for x in (source / "stat.txt").read_text().split()]
-    if stat[:2] != [n, r]:
-        raise ValueError("Released vocabulary differs from the configured dataset")
+    if stat[:2] != [n, r] or min(n, r) < 1:
+        raise ValueError("Vocabulary differs from the configured dataset")
     manifest = {
         "dataset": dataset,
         "entities": n,
         "relations": r,
         "raw_units_per_day": units,
-        "source_sha256": {"stat.txt": sha256(source / "stat.txt")},
+        "source_sha256": native_hashes or {"stat.txt": sha256(source / "stat.txt")},
         "splits": {},
     }
     previous = None
-    for split, expected in zip(["train", "valid", "test"], counts):
+    for split, expected in zip(SPLITS, counts):
         path = source / f"{split}.txt"
         array = np.loadtxt(path, dtype=np.int64, usecols=(0, 1, 2, 3), ndmin=2)
-        if len(array) != expected or array.shape[1] != 4:
+        if len(array) != expected or array.shape[1] != 4 or not len(array):
             raise ValueError(f"Unexpected {dataset}/{split} dimensions: {array.shape}")
         if (
             np.any(array[:, :3] < 0)
@@ -65,6 +112,20 @@ def prepare_dataset(dataset, data_root, cache_root):
         if np.any(np.diff(array[:, 3]) < 0):
             raise ValueError("Released event rows are not chronological")
         times = np.unique(array[:, 3])
+        if native is not None:
+            train_end = native["train_until_exclusive_utc_seconds"]
+            valid_end = native["valid_until_exclusive_utc_seconds"]
+            if (
+                (split == "train" and (len(times) < 2 or times[-1] >= train_end))
+                or (
+                    split == "valid"
+                    and (times[0] < train_end or times[-1] >= valid_end)
+                )
+                or (split == "test" and times[0] < valid_end)
+            ):
+                raise ValueError(
+                    f"Native {split} timestamps do not match the conversion cutoffs"
+                )
         if previous is not None and times[0] <= previous:
             raise ValueError("Chronological splits overlap")
         previous = times[-1]
@@ -101,32 +162,40 @@ def prepare_dataset(dataset, data_root, cache_root):
 
 
 class TemporalDataset:
-    def __init__(self, dataset, data_root=DATA_ROOT, cache_root=None, time_coordinate="benchmark_steps"):
+    def __init__(self, dataset, data_root=DATA_ROOT, cache_root=None):
         self.name = dataset
-        self.data_root = locate_data(data_root, dataset)
+        source = dataset_directory(data_root, dataset)
+        self.data_root = source.parent
         self.cache_root = Path(cache_root or ROOT / "cache")
         manifest_path = self.cache_root / dataset / "manifest.json"
         if not manifest_path.exists():
             prepare_dataset(dataset, self.data_root, self.cache_root)
         self.manifest = json.loads(manifest_path.read_text())
-        reference = ROOT / "splits" / f"{dataset}.json"
-        if not reference.exists() or self.manifest != json.loads(reference.read_text()):
-            raise ValueError("Prepared data do not match the released split reference")
+        if dataset in SPECS:
+            reference = ROOT / "splits" / f"{dataset}.json"
+            if self.manifest != json.loads(reference.read_text()):
+                raise ValueError(
+                    "Prepared data do not match the released split reference"
+                )
+        else:
+            native, hashes = native_reference(source, dataset)
+            if (
+                self.manifest["dataset"] != dataset
+                or self.manifest["source_sha256"] != hashes
+                or any(
+                    self.manifest[key] != native[key]
+                    for key in ("entities", "relations", "raw_units_per_day")
+                )
+            ):
+                raise ValueError(
+                    "Prepared data do not match the native manifest. Use a fresh cache or rerun prepare_data.py."
+                )
         for name, value in self.manifest["source_sha256"].items():
             if sha256(self.data_root / dataset / name) != value:
                 raise ValueError(f"Released input changed: {dataset}/{name}")
         self.entities = self.manifest["entities"]
         self.relations = self.manifest["relations"]
-        self.raw_units_per_day = self.manifest["raw_units_per_day"]
-        self.time_coordinate = time_coordinate
-        if time_coordinate == "benchmark_steps":
-            # ICEWS05-15: 1 raw unit per day; ICEWS14/18: 24;
-            # processed GDELT: one observation bin per 15 raw minutes.
-            self.units = 15.0 if dataset == "GDELT" else self.raw_units_per_day
-        elif time_coordinate == "legacy_days":
-            self.units = self.raw_units_per_day
-        else:
-            raise ValueError("Unsupported time coordinate")
+        self.units = self.manifest["raw_units_per_day"]
         self.raw = {}
         for split in ["train", "valid", "test"]:
             path = self.cache_root / dataset / f"{split}.npy"
@@ -164,9 +233,6 @@ class TemporalDataset:
         self.all_triples = self.all_triples[order]
         self.observation_times = np.unique(self.all_times)
         self.answer_cache = OrderedDict()
-        # Ordinary datasets have no query-specific clock perturbation.
-        self.query_time_offsets = None
-        self.query_model_times = None
 
     def perturbed(self, times):
         clone = object.__new__(type(self))
@@ -176,10 +242,11 @@ class TemporalDataset:
             or not np.isfinite(times).all()
         ):
             raise ValueError("Invalid perturbed test times")
-        # Never re-index observed events using noisy model-input timestamps:
-        # the original availability order and original answer groups are immutable.
-        clone.query_time_offsets = np.asarray(times, dtype=np.float64) - self.event_times["test"]
-        clone.query_model_times = np.asarray(times, dtype=np.float64)
+        clone.event_times = {
+            **self.event_times,
+            "test": np.asarray(times, dtype=np.float64),
+        }
+        clone._index()
         return clone
 
     def answers(self, time):
@@ -207,11 +274,11 @@ class ForecastHistory:
 
 
 class HistoryBuilder:
-    def __init__(self, data, device, history_window, graph_limit=0):
-        self.data, self.device, self.history_window = (
+    def __init__(self, data, device, history_days, graph_limit=0):
+        self.data, self.device, self.history_days = (
             data,
             torch.device(device),
-            history_window,
+            history_days,
         )
         self.graph_limit = graph_limit
         self.graph_cache = OrderedDict()
@@ -228,7 +295,7 @@ class HistoryBuilder:
         self.graph_cache.move_to_end(key)
         return self.graph_cache[key]
 
-    def build(self, target_time, observed_through=None, history_window=None):
+    def build(self, target_time, observed_through=None, history_days=None):
         data = self.data
         cutoff = (
             float(np.nextafter(target_time, -np.inf))
@@ -243,11 +310,11 @@ class HistoryBuilder:
             raise ValueError(
                 "No observed history exists at the requested open-loop cutoff"
             )
-        width = self.history_window if history_window is None else history_window
+        width = self.history_days if history_days is None else history_days
         anchor = target_time if observed_through is None else cutoff
         first = max(float(data.observation_times[0]), anchor - width)
         if first >= target_time:
-            first = target_time - min(width, 1.0)
+            first = target_time - min(width, 1 / data.units)
         initial_end = int(np.searchsorted(data.all_times, first, side="right"))
         visible_end = int(np.searchsorted(data.all_times, cutoff, side="right"))
         if initial_end > visible_end:
@@ -299,9 +366,7 @@ def main():
     )
     parser.add_argument("--data-root", type=Path, default=DATA_ROOT)
     parser.add_argument("--cache-root", type=Path, default=ROOT / "cache")
-    parser.add_argument(
-        "--datasets", nargs="+", choices=DATASETS, default=list(DATASETS)
-    )
+    parser.add_argument("--datasets", nargs="+", default=list(DATASETS))
     args = parser.parse_args()
     for dataset in args.datasets:
         manifest = prepare_dataset(dataset, args.data_root, args.cache_root)

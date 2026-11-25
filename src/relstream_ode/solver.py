@@ -1,4 +1,4 @@
-"""Configurable classical RK4 substeps per graph interval with direct gradients."""
+"""Three classical RK4 substeps per graph interval with direct gradients."""
 
 from functools import partial
 
@@ -10,13 +10,11 @@ def _add(state, delta, scale):
     return tuple(x + scale * dx for x, dx in zip(state, delta))
 
 
-def rk4_interval(field, state, start, end, graph, substeps=3):
-    if not isinstance(substeps, int) or substeps < 1:
-        raise ValueError("substeps must be a positive integer")
+def rk4_interval(field, state, start, end, graph):
     if end <= start:
         raise ValueError("Integration intervals must have positive duration")
-    step = (end - start) / substeps
-    for i in range(substeps):
+    step = (end - start) / 3
+    for i in range(3):
         t = start + i * step
         k1 = field(t, state, graph)
         k2 = field(t + step / 2, _add(state, k1, step / 2), graph)
@@ -29,18 +27,18 @@ def rk4_interval(field, state, start, end, graph, substeps=3):
     return state
 
 
-def _segment(h, r, field, intervals, substeps):
+def _segment(h, r, field, intervals):
     state = (h, r)
     for start, end, graph in intervals:
-        state = rk4_interval(field, state, start, end, graph, substeps)
+        state = rk4_interval(field, state, start, end, graph)
     return state
 
 
-def integrate(field, state, intervals, checkpoint_segments=0, substeps=3):
+def integrate(field, state, intervals, checkpoint_segments=0):
     size = checkpoint_segments or len(intervals) or 1
     for begin in range(0, len(intervals), size):
         segment = intervals[begin : begin + size]
-        function = partial(_segment, field=field, intervals=segment, substeps=substeps)
+        function = partial(_segment, field=field, intervals=segment)
         if checkpoint_segments and torch.is_grad_enabled():
             state = checkpoint(
                 function, *state, use_reentrant=False, preserve_rng_state=False

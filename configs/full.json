@@ -8,6 +8,7 @@
   "relation_hidden_dim": 200,
   "transport_hidden_dim": 200,
   "dropout": 0.3,
+  "history_days": 100.0,
   "rk4_substeps": 3,
   "layer_norm_epsilon": 1e-05,
   "time_frequency_base": 10000.0,
@@ -18,10 +19,5 @@
   "scheduler_step": 30,
   "scheduler_gamma": 0.1,
   "gradient_clip": 1.0,
-  "variant": "full",
-  "history_steps": 100.0,
-  "time_coordinate": "benchmark_steps",
-  "transport_formula": "paper",
-  "transport_implementation": "dense",
-  "usage_aggregation": "mean"
+  "variant": "full"
 }

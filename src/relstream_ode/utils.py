@@ -132,8 +132,4 @@ def hardware(device):
         "torch": torch.__version__,
         "cuda_runtime": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
-        "device_total_memory_bytes": (
-            torch.cuda.get_device_properties(device).total_memory
-            if device.type == "cuda" else None
-        ),
     }

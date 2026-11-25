@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy.stats import t as student_t
 
-from .config import DATASETS, ROOT, SEEDS, VARIANTS, source_hashes
+from .config import DATASETS, ROOT, SEEDS, VARIANTS
 from .utils import dump_json
 
 METRICS = ["MRR", "Hits@1", "Hits@3", "Hits@10"]
@@ -75,11 +75,6 @@ def main():
         if not path.exists():
             continue
         r = json.loads(path.read_text())
-        if r.get("source_sha256") != source_hashes():
-            raise ValueError(
-                f"Result {path} was produced by different source code; "
-                "keep pre-correction and revised model results in separate output roots"
-            )
         if (
             r["status"] != "completed"
             or not r.get("full_test")

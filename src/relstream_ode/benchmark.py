@@ -69,7 +69,7 @@ def main():
         raise FileExistsError("A resource record exists; choose another output root")
     limits = payload["limits"]
     config = payload["config"]
-    builder = HistoryBuilder(data, device, config["history_steps"], limits["graph_rows"])
+    builder = HistoryBuilder(data, device, config["history_days"], limits["graph_rows"])
     dates = [t for t in data.split_times["train"] if t > data.observation_times[0]][
         : limits["timestamps"] or None
     ]

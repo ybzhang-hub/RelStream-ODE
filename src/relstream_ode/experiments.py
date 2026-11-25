@@ -16,7 +16,6 @@ from .config import (
     ROOT,
     SEEDS,
     VARIANTS,
-    CORE_VARIANTS,
     load_config,
     source_hashes,
 )
@@ -42,7 +41,7 @@ def compatible_result(
         or result["dataset"] != dataset
         or result["seed"] != seed
         or saved != config
-        or result["protocol_fingerprint"] != fingerprint(protocol(config=config))
+        or result["protocol_fingerprint"] != fingerprint(protocol())
         or result["data_fingerprint"] != fingerprint(reference)
         or result["source_sha256"] != source_hashes()
         or result["checkpoint_sha256"] != sha256(directory / "best.pt")
@@ -80,7 +79,7 @@ def main():
         "--datasets", nargs="+", choices=DATASETS, default=list(DATASETS)
     )
     parser.add_argument(
-        "--variants", nargs="+", choices=VARIANTS, default=list(CORE_VARIANTS)
+        "--variants", nargs="+", choices=VARIANTS, default=list(VARIANTS)
     )
     parser.add_argument(
         "--seeds", nargs="+", type=int, choices=SEEDS, default=list(SEEDS)

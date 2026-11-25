@@ -2,6 +2,22 @@
 
 import torch
 from torch import nn
+from torch.nn import functional as F
+
+
+def normalize_states(states, norm):
+    # BatchNorm needs multiple rows to estimate variance during training.
+    if norm.training and len(states) == 1:
+        return F.batch_norm(
+            states,
+            norm.running_mean,
+            norm.running_var,
+            norm.weight,
+            norm.bias,
+            training=False,
+            eps=norm.eps,
+        )
+    return norm(states)
 
 
 class TuckerDecoder(nn.Module):
@@ -15,8 +31,8 @@ class TuckerDecoder(nn.Module):
         self.dropout = nn.Dropout(config["dropout"])
 
     def prepare(self, entities, relations):
-        return self.dropout(self.entity_norm(entities)), self.dropout(
-            self.relation_norm(relations)
+        return self.dropout(normalize_states(entities, self.entity_norm)), self.dropout(
+            normalize_states(relations, self.relation_norm)
         )
 
     def forward(self, entities, relations, subjects, relation_ids):

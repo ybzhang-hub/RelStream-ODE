@@ -95,7 +95,7 @@ def main():
             capsize=3,
         )
         ax.set_xlabel(
-            "Perturbed units (%)"
+            "Perturbed test timestamps (%)"
             if key[2] == "jitter"
             else f"Target offset ({key[4]})"
         )
@@ -137,7 +137,7 @@ def main():
     component_figures = 0
     order = ["full", "no_relation_evolution", "identity_transport", "no_graph_flow"]
     for dataset, values in component_groups.items():
-        if not set(order).issubset(values):
+        if set(values) != set(order):
             continue
         means = np.asarray([float(values[k]["mean"]) for k in order]) * 100
         sd = np.asarray([float(values[k]["sample_sd"]) for k in order]) * 100

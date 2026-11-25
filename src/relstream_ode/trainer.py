@@ -1,10 +1,7 @@
 """Full-entity optimization, validation selection and resumable training."""
 
 import argparse
-try:
-    import fcntl
-except ImportError:  # Native Windows; file locking handled below.
-    fcntl = None
+import fcntl
 import json
 import signal
 import time
@@ -23,7 +20,6 @@ from .config import (
     SEEDS,
     VARIANTS,
     load_config,
-    checkpoint_config,
     source_hashes,
     validate_config,
 )
@@ -45,8 +41,7 @@ from .utils import (
 )
 
 
-def protocol(tie="average", config=None):
-    config = config or load_config()
+def protocol(tie="average"):
     return {
         "query_direction": "tail_only",
         "inverse_edges": False,
@@ -58,13 +53,8 @@ def protocol(tie="average", config=None):
         "history": "rolling_observed_events_strictly_before_target",
         "initialization": "cumulative_t_le_first_boundary",
         "intervals": "new_events_since_previous_boundary",
-        "time_coordinate": config["time_coordinate"],
-        "history_width": config["history_steps"],
-        "transport_formula": config["transport_formula"],
-        "transport_implementation": config["transport_implementation"],
-        "usage_aggregation": config["usage_aggregation"],
-        "rk4_substeps": config["rk4_substeps"],
-        "solver": "classical_RK4; direct_differentiation",
+        "time_coordinate": "days_since_first_raw_timestamp",
+        "solver": "three_classical_RK4_substeps_per_interval; direct_differentiation",
         "checkpoint": "maximum_validation_MRR; earliest_checkpoint_retained_for_equal_MRR",
         "early_stopping": False,
     }
@@ -75,24 +65,12 @@ def locked(directory):
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ".run.lock").open("a") as stream:
         try:
-            if fcntl is not None:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            else:
-                import msvcrt
-                stream.write(" ")
-                stream.flush()
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-        except (BlockingIOError, OSError):
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
             raise RuntimeError(
                 "This run directory already has an active writer"
             ) from None
-        try:
-            yield
-        finally:
-            if fcntl is None:
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        yield
 
 
 def add_data_arguments(parser):
@@ -107,7 +85,11 @@ def train_arguments():
     parser = argparse.ArgumentParser(
         description="Train RelStream-ODE with validation-only checkpoint selection"
     )
-    parser.add_argument("--dataset", choices=DATASETS, required=True)
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Released dataset or a converted native dataset name",
+    )
     parser.add_argument("--seed", type=int, choices=SEEDS, default=42)
     parser.add_argument("--config", type=Path, default=ROOT / "configs/full.json")
     parser.add_argument("--variant", choices=VARIANTS)
@@ -169,20 +151,18 @@ def train(args):
     config = load_config(args.config)
     if args.variant is not None:
         config["variant"] = args.variant
-        if args.variant == "max_usage":
-            config["usage_aggregation"] = "max"
-        elif args.variant == "attention_usage":
-            config["usage_aggregation"] = "attention"
     data_tick = time.perf_counter()
-    data = TemporalDataset(args.dataset, args.data_root, args.cache_root, config["time_coordinate"])
+    data = TemporalDataset(args.dataset, args.data_root, args.cache_root)
     limits = _limits(data, args.smoke)
     if args.smoke:
         config.update(
-            epochs=1, history_steps=float(np.diff(data.observation_times).min())
+            epochs=1, history_days=float(np.diff(data.observation_times).min())
         )
     validate_config(config)
-    builder = HistoryBuilder(data, device, config["history_steps"], limits["graph_rows"])
-    p = protocol(args.tie, config)
+    builder = HistoryBuilder(data, device, config["history_days"], limits["graph_rows"])
+    p = protocol(args.tie)
+    if args.dataset not in DATASETS:
+        p["candidate_entities"] = "full_native_training_vocabulary"
     runtime = {
         "device_type": device.type,
         "threads": args.threads,
@@ -346,8 +326,6 @@ def train(args):
                         "steps": 0,
                         "gradient_norm_sum": 0.0,
                         "above_clip": 0,
-                        "integrated_intervals": 0,
-                        "vector_field_evaluations": 0,
                         "training_seconds": 0.0,
                         "peak_allocated_bytes": 0,
                         "peak_reserved_bytes": 0,
@@ -369,7 +347,6 @@ def train(args):
                             device=device,
                         )
                         optimizer.zero_grad(set_to_none=True)
-                        nfe_before = model.field.nfe
                         scores = model(history, batch, args.checkpoint_segments)
                         loss = F.cross_entropy(scores, batch[:, 2])
                         if not torch.isfinite(loss):
@@ -377,8 +354,6 @@ def train(args):
                                 f"Nonfinite loss at epoch {epoch}, day {target}"
                             )
                         loss.backward()
-                        progress["integrated_intervals"] += len(history.intervals)
-                        progress["vector_field_evaluations"] += model.field.nfe - nfe_before
                         norm = torch.nn.utils.clip_grad_norm_(
                             model.parameters(),
                             config["gradient_clip"],
@@ -461,8 +436,6 @@ def train(args):
                     "training_queries": progress["queries"],
                     "optimizer_steps": progress["steps"],
                     "optimizer_steps_total": optimizer_steps,
-                    "integrated_intervals": progress["integrated_intervals"],
-                    "vector_field_evaluations": progress["vector_field_evaluations"],
                     "learning_rate": lr,
                     "pre_clip_gradient_norm_mean": progress["gradient_norm_sum"]
                     / progress["steps"],
@@ -550,11 +523,9 @@ def main():
 
 def load_evaluation(checkpoint, data_root, cache_root, device, threads):
     payload, digest = read_checkpoint(checkpoint)
-    payload["config"] = checkpoint_config(payload["config"])
+    validate_config(payload["config"])
     configure_seed(payload["seed"], threads)
-    data = TemporalDataset(
-        payload["dataset"], data_root, cache_root, payload["config"]["time_coordinate"]
-    )
+    data = TemporalDataset(payload["dataset"], data_root, cache_root)
     if payload["data_fingerprint"] != data.fingerprint:
         raise ValueError("Checkpoint data fingerprint mismatch")
     model = RelStreamODE(data.entities, data.relations, payload["config"]).to(device)
@@ -583,7 +554,7 @@ def evaluate_main():
     )
     limits = payload["limits"]
     builder = HistoryBuilder(
-        data, device, payload["config"]["history_steps"], limits["graph_rows"]
+        data, device, payload["config"]["history_days"], limits["graph_rows"]
     )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     destination = (

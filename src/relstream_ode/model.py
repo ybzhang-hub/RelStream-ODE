@@ -21,10 +21,7 @@ class RelStreamODE(nn.Module):
         state = self.initializer(
             history.initialization, checkpoint_layers=bool(checkpoint_segments)
         )
-        state = integrate(
-            self.field, state, history.intervals, checkpoint_segments,
-            substeps=self.config["rk4_substeps"],
-        )
+        state = integrate(self.field, state, history.intervals, checkpoint_segments)
         if not all(torch.isfinite(x).all() for x in state):
             raise FloatingPointError(
                 "Nonfinite evolved state; inspect times, interval lengths and optimizer diagnostics"
