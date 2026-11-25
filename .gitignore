@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.venv/
+.env
+.DS_Store
+data/*
+!data/README.md
+cache/
+outputs/
+*.pt
+*.npy
+*.npz
+*.log
